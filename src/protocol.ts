@@ -8,6 +8,7 @@ export type GraphDirection = 'DOWN' | 'RIGHT' | 'LEFT' | 'UP'
 
 // Graph-local controls override the defaults without changing VS Code settings.
 export interface GraphSettings {
+    layoutAlgorithm: LayoutAlgorithm
     direction: GraphDirection
     showFileGroupBox: boolean
     showFileGroupLabel: boolean

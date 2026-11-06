@@ -10,9 +10,14 @@ If you like Chartographer and think I could be a good fit for your team, feel fr
 * LinkedIn: https://linkedin.com/in/richard-putra
 * GitHub: https://github.com/arpicato
 
+## [1.6.0] 2026-11-06
+
+- Add a per-graph Layout picker for Klay, Dagre, and ELK that applies immediately and restores the selected algorithm when reopening a graph.
+- Preserve direction and file-group choices when switching layouts, and apply the latest choice after an in-progress layout finishes.
+
 ## [1.5.1] 2026-11-06
 
-- Report no path for disconnected functions instead of zero hops.
+- Report "no path" for disconnected functions instead of zero hops.
 - Display function names literally in the path indicator and context menu, preserving generic parameters and special characters.
 
 ## [1.5.0] 2026-11-06

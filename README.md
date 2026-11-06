@@ -11,7 +11,7 @@ vscode extension to generate call graph using [Cytoscape.js](https://js.cytoscap
 * works on any language with a language server
 * show functions and methods grouped by file
 * generate the complete incoming call graph with one command, without prompts
-* change flow direction and file-group decorations immediately in each graph
+* change layout algorithm, flow direction, and file-group decorations immediately in each graph
 * optional smaller filename subtitles beneath function names
 * **Hover + `E`** to expand a node one level
 * **Hover + `Shift+E`** to expand recursively
@@ -50,10 +50,11 @@ The extension does not assign or overwrite your keyboard shortcuts.
 
 ### Controls inside each graph
 
+- **Layout:** Klay, Dagre, or ELK. Switching algorithms rearranges the current graph immediately while keeping its direction and file-group choices.
 - **Direction:** Top to bottom, Left to right, Right to left, or Bottom to top. The picker reruns the layout immediately and works with Klay, Dagre, and ELK.
 - **File groups:** Hidden, Boxes only, Labels only, or Boxes + labels. Decorations change immediately; grouping still influences layout even when decorations are hidden.
 
-Both choices are saved with that graph and restored when it reopens. They do not change VS Code settings or other open graphs. Settings supply defaults for new graphs.
+All three choices are saved with that graph and restored when it reopens. They do not change VS Code settings or other open graphs. Settings supply defaults for new graphs.
 
 Function names remain the primary labels. Enable `chartographer.showFunctionFileSubtitle` for smaller filename subtitles. When file-group labels are visible, repeated subtitles are hidden; hiding group labels shows the subtitles again. Search matches both function names and filenames, including when filename subtitles are hidden.
 

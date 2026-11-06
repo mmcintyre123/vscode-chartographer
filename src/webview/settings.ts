@@ -4,10 +4,13 @@ export type FileGroupMode = 'hidden' | 'boxes' | 'labels' | 'both'
 
 // New graphs use configuration defaults; restored graphs keep their own choices.
 export function createGraphSettings(config: ChartographerConfig, saved?: WebviewState['graphSettings']): GraphSettings {
-    const defaultDirection = (config.defaultGraphLayoutAlgorithm ?? 'klay') === 'klay'
+    // Older saved graphs take their algorithm from the configuration captured with that graph.
+    const layoutAlgorithm = saved?.layoutAlgorithm ?? config.defaultGraphLayoutAlgorithm ?? 'klay'
+    const defaultDirection = layoutAlgorithm === 'klay'
         ? config.defaultKlayDirection ?? (config.defaultDirection === 'horizontal' ? 'RIGHT' : 'DOWN')
         : config.defaultDirection === 'horizontal' ? 'RIGHT' : 'DOWN'
     return {
+        layoutAlgorithm,
         direction: saved?.direction ?? saved?.klayDirection ?? defaultDirection,
         showFileGroupBox: saved?.showFileGroupBox ?? config.showFileGroupBox ?? false,
         showFileGroupLabel: saved?.showFileGroupLabel ?? config.showFileGroupLabel ?? false,

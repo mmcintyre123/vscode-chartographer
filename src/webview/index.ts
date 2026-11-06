@@ -2,7 +2,7 @@ import cytoscape, { Core } from 'cytoscape'
 import cytoscapeDagre from 'cytoscape-dagre'
 import cytoscapeElk from 'cytoscape-elk'
 import cytoscapeKlay from 'cytoscape-klay'
-import { GraphDirection, GraphSettings, WebviewToExtensionMessage, ExtensionToWebviewMessage, WebviewState } from '../protocol'
+import { GraphDirection, GraphSettings, LayoutAlgorithm, WebviewToExtensionMessage, ExtensionToWebviewMessage, WebviewState } from '../protocol'
 import { createGraphSettings, FileGroupMode, getFileGroupMode, showFunctionFileSubtitles, withFileGroupMode } from './settings'
 import { setupWheelZoom } from './wheel-zoom'
 
@@ -39,7 +39,7 @@ const pendingExpansions = new Set<string>()
 let graphSettings: GraphSettings
 const nodeLabelElements = new Map<string, { container: HTMLDivElement; title: HTMLDivElement; file: HTMLDivElement }>()
 
-const layoutDebounce: Record<string, number> = {
+const layoutDebounce: Record<LayoutAlgorithm, number> = {
     klay: 5,
     elk: 500,
     dagre: 5,
@@ -350,21 +350,28 @@ function syncNodeLabels(): void {
 
 // Pickers update this graph immediately without changing VS Code configuration.
 function setupGraphControls(): void {
+    const layout = document.getElementById('graph-layout') as HTMLSelectElement
     const direction = document.getElementById('graph-direction') as HTMLSelectElement
     const groups = document.getElementById('file-groups') as HTMLSelectElement
+    layout.value = graphSettings.layoutAlgorithm
     direction.value = graphSettings.direction
     groups.value = getFileGroupMode(graphSettings)
+    layout.addEventListener('change', () => {
+        graphSettings.layoutAlgorithm = layout.value as LayoutAlgorithm
+        saveGraphState()
+        runLayout()
+    })
     direction.addEventListener('change', () => {
         graphSettings.direction = direction.value as GraphDirection
         saveGraphState()
-        cy?.layout(getLayoutOpts()).run()
+        runLayout()
     })
     groups.addEventListener('change', () => {
         graphSettings = withFileGroupMode(graphSettings, groups.value as FileGroupMode)
         cy?.style(getCyStyle())
         syncNodeLabels()
         saveGraphState()
-        cy?.layout(getLayoutOpts()).run()
+        runLayout()
     })
 }
 
@@ -443,7 +450,7 @@ function setupSearch(): void {
 }
 
 function getLayoutOpts(): cytoscape.LayoutOptions {
-    const algo = state.config.defaultGraphLayoutAlgorithm || 'klay'
+    const algo = graphSettings.layoutAlgorithm
     const dir = graphSettings.direction
     const dagreDirections = { DOWN: 'TB', RIGHT: 'LR', LEFT: 'RL', UP: 'BT' }
 
@@ -477,11 +484,35 @@ function getLayoutOpts(): cytoscape.LayoutOptions {
     return base as unknown as cytoscape.LayoutOptions
 }
 
-const debouncedLayout = debounce(() => {
+let layoutRunning = false
+let layoutRequested = false
+let layoutTimer: number | undefined
+
+// ELK finishes asynchronously and cannot be stopped; run the latest choice next.
+function runLayout(): void {
+    window.clearTimeout(layoutTimer)
     if (!cy) return
-    cy.layout(getLayoutOpts()).run()
-    vscode.setState(state)
-}, layoutDebounce[state.config.defaultGraphLayoutAlgorithm || 'dagre'])
+    if (layoutRunning) {
+        layoutRequested = true
+        return
+    }
+    layoutRunning = true
+    const layout = cy.layout(getLayoutOpts())
+    layout.one('layoutstop', () => {
+        layoutRunning = false
+        if (layoutRequested) {
+            layoutRequested = false
+            runLayout()
+        }
+    })
+    layout.run()
+}
+
+// Streaming additions use the selected algorithm's delay, including after a switch.
+function debouncedLayout(): void {
+    window.clearTimeout(layoutTimer)
+    layoutTimer = window.setTimeout(runLayout, layoutDebounce[graphSettings.layoutAlgorithm])
+}
 
 const methods: {
     [K in ExtensionToWebviewMessage['type']]: (msg: Extract<ExtensionToWebviewMessage, { type: K }>) => void
@@ -668,7 +699,7 @@ function start(): void {
     resetLeafHighlights()
     resetHighlights()
     cy.on('render', syncNodeLabels)
-    cy!.layout(getLayoutOpts()).run()
+    runLayout()
     saveGraphState()
 
     setupSearch()
