@@ -10,6 +10,11 @@ If you like Chartographer and think I could be a good fit for your team, feel fr
 * LinkedIn: https://linkedin.com/in/richard-putra
 * GitHub: https://github.com/arpicato
 
+## [1.5.1] 2026-11-06
+
+- Report no path for disconnected functions instead of zero hops.
+- Display function names literally in the path indicator and context menu, preserving generic parameters and special characters.
+
 ## [1.5.0] 2026-11-06
 
 - Restore the direct `Chartographer.showAllIncomingCallGraph` command for unlimited incoming calls without prompts.

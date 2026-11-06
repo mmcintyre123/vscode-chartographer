@@ -84,7 +84,7 @@ The downloaded VS Code is cached in `.vscode-test/`.
 - Keep `Chartographer.showChangelog` contributed and registered so the popup content can be tested manually before publishing.
 
 ### Path finding
-- Cytoscape `dijkstra().pathTo()` returns root-only collection when no path exists (not empty). Check `path.nodes().filter(n => n.id() === targetId).length > 0` instead of `path.length === 0`.
+- Cytoscape `dijkstra().pathTo()` returns a one-node collection containing the target when no path exists. Check `Number.isFinite(paths.distanceTo(target))` before displaying the path; checking whether the target is present does not establish reachability.
 - `directed: false` lets reverse paths work but also finds paths through sink nodes (a→b←c would find a path from a to c).
 - `cy.getElementById()` returns `CollectionReturnValue`. Pass `.first()` to `dijkstra()` root param for type safety.
 - `computePath` must call `resetHighlights()` first to clear any existing neighborhood highlight state.

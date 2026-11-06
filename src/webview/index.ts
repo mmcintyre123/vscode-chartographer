@@ -244,17 +244,19 @@ function computePath(sourceId: string, targetId: string): void {
     const target = cy.getElementById(targetId).first() as any
     if (source.length === 0 || target.length === 0) return
 
-    const path = cy.elements().dijkstra({
+    const paths = cy.elements().dijkstra({
         root: source,
         directed: false,
         weight: () => 1,
-    }).pathTo(target)
+    })
 
-    if (path.length === 0) {
+    // An unreachable target still has a one-node path; its distance is infinite.
+    if (!Number.isFinite(paths.distanceTo(target))) {
         showPathIndicator(sourceId, targetId, -1)
         return
     }
 
+    const path = paths.pathTo(target)
     cy.nodes().not(path).not(path.parents()).addClass('dimmedNode')
     cy.edges().not(path).addClass('dimmedEdge')
 
@@ -267,11 +269,13 @@ function showPathIndicator(sourceId: string, targetId: string, hops: number): vo
     if (!el) return
     const sourceLabel = cy?.getElementById(sourceId).data('label') || sourceId
     const targetLabel = cy?.getElementById(targetId).data('label') || targetId
-    if (hops < 0) {
-        el.innerHTML = `${sourceLabel} → ${targetLabel} · no path <span class="path-indicator-close">&times;</span>`
-    } else {
-        el.innerHTML = `${sourceLabel} → ${targetLabel} · ${hops} hop${hops !== 1 ? 's' : ''} <span class="path-indicator-close">&times;</span>`
-    }
+    // Source names are literal text; keep the close control separate from them.
+    const distance = hops < 0 ? 'no path' : `${hops} hop${hops !== 1 ? 's' : ''}`
+    el.textContent = `${sourceLabel} → ${targetLabel} · ${distance} `
+    const close = document.createElement('span')
+    close.className = 'path-indicator-close'
+    close.textContent = '×'
+    el.appendChild(close)
     el.style.display = 'block'
 }
 
@@ -583,7 +587,7 @@ function showContextMenu(x: number, y: number, nodeId: string): void {
     const label = cy?.getElementById(nodeId).data('label') || nodeId
 
     menu.innerHTML = `
-        <div class="context-menu-item" data-action="remove">Remove "${label}" <span class="shortcut">Del</span></div>
+        <div class="context-menu-item" data-action="remove"><span class="context-menu-node-label"></span> <span class="shortcut">Del</span></div>
         <div class="context-menu-item" data-action="removeDescendants">Remove descendants</div>
         <div class="context-menu-item" data-action="removeAncestors">Remove ancestors</div>
         <div class="context-menu-separator"></div>
@@ -593,6 +597,8 @@ function showContextMenu(x: number, y: number, nodeId: string): void {
         <div class="context-menu-item" data-action="findPathTo">Find path to... <span class="shortcut">Shift+Click</span></div>
         <div class="context-menu-item" data-action="goTo">Go to function <span class="shortcut">Ctrl+Click</span></div>
     `
+    // Keep generic parameters and other source text out of the HTML parser.
+    menu.querySelector('.context-menu-node-label')!.textContent = `Remove "${label}"`
 
     menu.style.display = 'block'
     menu.style.left = `${x}px`
