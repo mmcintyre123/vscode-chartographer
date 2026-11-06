@@ -2,7 +2,7 @@
     "name": "chartographer",
     "displayName": "Chartographer — Call Graph",
     "description": "Interactive call graph and call hierarchy visualization powered by VS Code's language server/LSP. Explore callers, callees, and function relationships.",
-    "version": "1.4.2",
+    "version": "1.5.0",
     "publisher": "ArpinFidel",
     "engines": {
         "vscode": "^1.65.0"
@@ -12,6 +12,7 @@
     ],
     "activationEvents": [
         "onStartupFinished",
+        "onCommand:Chartographer.showAllIncomingCallGraph",
         "onWebviewPanel:Chartographer.previewCallGraph"
     ],
     "main": "./out/extension.js",
@@ -24,6 +25,10 @@
             {
                 "command": "Chartographer.showCallGraph",
                 "title": "Chartographer: Show Call Graph"
+            },
+            {
+                "command": "Chartographer.showAllIncomingCallGraph",
+                "title": "Chartographer: Show All Incoming Call Graph"
             },
             {
                 "command": "Chartographer.showOutputChannel",
@@ -41,6 +46,9 @@
                 },
                 {
                     "command": "Chartographer.showCallGraph"
+                },
+                {
+                    "command": "Chartographer.showAllIncomingCallGraph"
                 },
                 {
                     "command": "Chartographer.showOutputChannel"
@@ -87,7 +95,20 @@
                             "ELK",
                             "Dagre"
                         ],
-                        "default": "dagre"
+                        "default": "klay"
+                    },
+                    "chartographer.defaultKlayDirection": {
+                        "description": "Initial flow direction for new Klay graphs. The graph's Direction picker changes only that graph.",
+                        "type": "string",
+                        "enum": ["DOWN", "RIGHT", "LEFT", "UP"],
+                        "enumDescriptions": ["Top to bottom", "Left to right", "Right to left", "Bottom to top"],
+                        "default": "DOWN"
+                    },
+                    "chartographer.klaySpacing": {
+                        "description": "Spacing between nodes in the Klay layout algorithm.",
+                        "type": "number",
+                        "minimum": 0,
+                        "default": 1
                     },
                     "chartographer.respectGitignore": {
                         "description": "Respect .gitignore patterns when generating call graphs",
@@ -108,8 +129,9 @@
                         "default": "default"
                     },
                     "chartographer.nodeDisplayFormat": {
-                        "description": "Format for displaying file nodes in the call graph. \n Supported tokens:\n - $path: The relative path (same as default)\n - $path{N}: The last N segments of the path\n - $fullPath: The full path\n - $fileName: Just the file name\n - $fileExt: Just the file extension",
-                        "type": "string"
+                        "description": "Format for file-group labels and optional function subtitles. Tokens: $path (directory), $path{N} (last N directory segments), $fullPath (the supplied file path), $fileName (without extension), and $fileExt (without dot).",
+                        "type": "string",
+                        "default": "$fileName.$fileExt"
                     },
                     "chartographer.trimFunctionPattern": {
                         "description": "Regex to extract a clean function name. First match is used as the display name. Empty = no trimming.",
@@ -120,12 +142,14 @@
                     "chartographer.wheelSensitivity": {
                         "description": "Zoom sensitivity (0.01-10, lower = slower). Requires reopening the graph panel to take effect.",
                         "type": "number",
-                        "default": 0.5
+                        "minimum": 0.01,
+                        "maximum": 10,
+                        "default": 0.1
                     },
                     "chartographer.defaultDirection": {
-                        "description": "Flow direction for layout algorithms",
+                        "description": "Initial flow direction for new Dagre and ELK graphs. Klay uses defaultKlayDirection. The graph's Direction picker changes only that graph.",
                         "type": "string",
-                        "default": "horizontal",
+                        "default": "vertical",
                         "enum": [
                             "horizontal",
                             "vertical"
@@ -136,14 +160,19 @@
                         ]
                     },
                     "chartographer.showFileGroupBox": {
-                        "description": "Show a visible border and background box around nodes grouped by file",
+                        "description": "Show file-group boxes in new graphs. Hiding boxes preserves grouping for layout; the File groups picker changes only the current graph.",
                         "type": "boolean",
-                        "default": true
+                        "default": false
                     },
                     "chartographer.showFileGroupLabel": {
-                        "description": "Show the formatted filename label above each file group",
+                        "description": "Show filename labels above file groups in new graphs. Group labels hide repeated filename subtitles beneath functions; the File groups picker changes only the current graph.",
                         "type": "boolean",
-                        "default": true
+                        "default": false
+                    },
+                    "chartographer.showFunctionFileSubtitle": {
+                        "description": "Show a smaller filename beneath each function name when file-group labels are hidden.",
+                        "type": "boolean",
+                        "default": false
                     }
                 }
             },
@@ -210,12 +239,13 @@
         "vscode:prepublish": "npm run build",
         "build": "node esbuild.config.mjs",
         "typecheck": "tsc --noEmit",
-        "watch": "tsc -watch -p ./",
+        "watch": "node esbuild.config.mjs --watch",
         "compile:tests": "tsc -p tsconfig.test.json",
         "lint": "eslint src --ext ts",
         "pretest": "npm run build && npm run compile:tests && npm run lint",
-        "test": "node ./out/test/runTest.js",
-        "test:unit": "mocha --ui tdd out/test/suite/graph.test.js",
+        "test": "node ./out-tests/test/runTest.js",
+        "pretest:unit": "npm run compile:tests",
+        "test:unit": "mocha --ui tdd out-tests/test/suite/graph.test.js out-tests/test/suite/settings.test.js",
         "package": "vsce package --no-yarn"
     },
     "devDependencies": {

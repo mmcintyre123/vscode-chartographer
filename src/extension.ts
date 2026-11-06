@@ -68,6 +68,18 @@ function registerCommands(context: vscode.ExtensionContext, workspaceRoot: strin
     )
     context.subscriptions.push(addHierarchy)
 
+    // Preserve the direct keyboard workflow: all callers, without direction or depth prompts.
+    const showAllIncomingCallGraph = vscode.commands.registerCommand(
+        'Chartographer.showAllIncomingCallGraph',
+        async () => {
+            await vscode.window.withProgress(
+                getDefaultProgressOptions('Generate incoming call graph'),
+                buildWebview(context, workspaceRoot, 'Incoming', -1)
+            )
+        }
+    )
+    context.subscriptions.push(showAllIncomingCallGraph)
+
     const showCallGraph = vscode.commands.registerCommand(
         'Chartographer.showCallGraph',
         async () => {

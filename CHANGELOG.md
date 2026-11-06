@@ -10,6 +10,14 @@ If you like Chartographer and think I could be a good fit for your team, feel fr
 * LinkedIn: https://linkedin.com/in/richard-putra
 * GitHub: https://github.com/arpicato
 
+## [1.5.0] 2026-11-06
+
+- Restore the direct `Chartographer.showAllIncomingCallGraph` command for unlimited incoming calls without prompts.
+- Add immediate, saved per-graph Direction and File groups pickers.
+- Restore compact Klay defaults, the original wheel-zoom response, optional smaller filename subtitles, and filename-aware function search.
+- Keep upstream hover, context menu, edge navigation, and path interactions; correct Shift+E and guard repeated expansion.
+- Use npm with esbuild for builds and watch mode; exclude local plans, handoffs, and validation output from packages.
+
 ## [1.4.2] 2026-08-08
 
 - Fix changelog popup after extension updates

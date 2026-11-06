@@ -3,7 +3,7 @@ import { CyNode, Element, getCyElems, getNode } from './graph'
 import { resolveHtml } from './html'
 import { CallHierarchy, getCallHierarchy as buildGraph } from './call'
 import { printChannelOutput } from './logger'
-import { ChartographerConfig, Direction, LayoutAlgorithm, LayoutDirection, WebviewToExtensionMessage, ExtensionToWebviewMessage } from './protocol'
+import { ChartographerConfig, Direction, GraphDirection, LayoutAlgorithm, LayoutDirection, WebviewToExtensionMessage, ExtensionToWebviewMessage } from './protocol'
 
 type State = {
     elems: Element[],
@@ -23,6 +23,8 @@ export const buildWebview = (
 ) => {
     return async () => {
         const entries: vscode.CallHierarchyItem[] = await getSelectedFunctions()
+        // Do not open an empty graph when the cursor does not resolve to a function.
+        if (entries.length === 0) return
 
         const webviewType = `Chartographer.previewCallGraph`
         const panel = vscode.window.createWebviewPanel(
@@ -46,7 +48,7 @@ export const registerWebviewPanelSerializer = (
 ) => {
     vscode.window.registerWebviewPanelSerializer(`Chartographer.previewCallGraph`,
         {
-            async deserializeWebviewPanel(webviewPanel: vscode.WebviewPanel, state: any) {
+            async deserializeWebviewPanel(webviewPanel: vscode.WebviewPanel, state: State | undefined) {
                 if (!state) {
                     vscode.window.showErrorMessage(
                         'Chartographer: fail to load previous state'
@@ -65,8 +67,8 @@ export const registerWebviewPanelSerializer = (
 
                 const { handler, html } = setupCallGraph(context, workspaceRoot, webviewPanel, undefined, state)
 
-                webviewPanel.webview.html = html
                 webviewPanel.webview.onDidReceiveMessage(handler)
+                webviewPanel.webview.html = html
             }
         }
     )
@@ -111,12 +113,15 @@ export function setupCallGraph(
         highlightLeaves: configs.get<boolean>('highlightLeaves'),
         defaultGraphLayoutAlgorithm: configs.get<string>('defaultGraphLayoutAlgorithm') as LayoutAlgorithm | undefined,
         defaultDirection: configs.get<string>('defaultDirection') as LayoutDirection | undefined,
+        defaultKlayDirection: configs.get<GraphDirection>('defaultKlayDirection'),
+        klaySpacing: configs.get<number>('klaySpacing'),
         colorScheme: configs.get<string>('colorScheme'),
         nodeDisplayFormat: configs.get<string>('nodeDisplayFormat'),
         trimFunctionPattern: configs.get<string>('trimFunctionPattern'),
         wheelSensitivity: configs.get<number>('wheelSensitivity'),
         showFileGroupBox: configs.get<boolean>('showFileGroupBox'),
         showFileGroupLabel: configs.get<boolean>('showFileGroupLabel'),
+        showFunctionFileSubtitle: configs.get<boolean>('showFunctionFileSubtitle'),
         colors: {
             nodeBackgroundColor: configs.get<string>('colors.nodeBackgroundColor'),
             nodeColor: configs.get<string>('colors.nodeColor'),
@@ -137,15 +142,30 @@ export function setupCallGraph(
     printChannelOutput(JSON.stringify(config, null, 4))
 
     const nodes: { [key: string]: Element}  = {}
+    const expandingNodes = new Set<string>()
+    const pendingBatches = new Map<number, Extract<ExtensionToWebviewMessage, { type: 'addElems' }>>()
+    let nextBatchId = 0
+    let initialized = false
+
+    // The webview restores its saved elements itself; rebuild only the host navigation lookup.
+    for (const element of state?.elems ?? []) {
+        if (element.group === 'nodes' && !(element.data.uri instanceof vscode.Uri)) {
+            element.data.uri = vscode.Uri.from(element.data.uri)
+        }
+        nodes[element.data.id] = element
+    }
     const addElems = (elems: Element[]) => {
         for (const node of elems) {
             if (nodes[node.data.id]) continue
             nodes[node.data.id] = node
         }
-        const msg: ExtensionToWebviewMessage = {
+        const msg: Extract<ExtensionToWebviewMessage, { type: 'addElems' }> = {
             type: 'addElems',
             data: elems,
+            batchId: ++nextBatchId,
         }
+        // Hidden webviews can miss messages, so keep each batch until its saved-state acknowledgement.
+        pendingBatches.set(msg.batchId, msg)
         panel.webview.postMessage(msg)
     }
     const addEdge = (edge: CallHierarchy) => {
@@ -153,7 +173,7 @@ export function setupCallGraph(
         addElems(elems)
     }
 
-    const handler = async (msg: WebviewToExtensionMessage | { type: 'timing', data: { scriptLoad: number, toReady: number, render: number, total: number } }) => {
+    const handler = async (msg: WebviewToExtensionMessage) => {
         switch (msg.type) {
             case 'state':
                 switch (msg.data) {
@@ -172,30 +192,32 @@ export function setupCallGraph(
 							addEdge,
 						}
 
-                        if (params) {
-							Promise.all(params.entryPoints.map(async (entry) => {
-								await buildGraph(params.direction, entry, addEdge, params.maxDepth)
-							}))
+                        // Retry only missed additions; acknowledged nodes may have been deliberately removed.
+                        for (const batch of pendingBatches.values()) {
+                            panel.webview.postMessage(batch)
                         }
-                        if (state) {
-                            for (const node of state.elems) {
-                                if ('uri' in node.data && node.data.uri && typeof node.data.uri === 'object' && !(node.data.uri instanceof vscode.Uri)) {
-                                    const u = node.data.uri as any
-                                    if (u.scheme) {
-                                        (node.data as any).uri = vscode.Uri.from({ scheme: u.scheme, authority: u.authority, path: u.path, query: u.query, fragment: u.fragment })
-                                    }
-                                }
-                                if (nodes[node.data.id]) continue
-                                nodes[node.data.id] = node
+
+                        // Revealing a panel can recreate its webview. Do not regenerate removed nodes.
+                        if (initialized) break
+                        initialized = true
+                        if (params) {
+                            try {
+                                await Promise.all(params.entryPoints.map(async (entry) => {
+                                    // A function with no callers still belongs in its own graph.
+                                    addEdge({ item: entry, fromRanges: [] })
+                                    await buildGraph(params.direction, entry, addEdge, params.maxDepth)
+                                }))
+                            } catch (error) {
+                                vscode.window.showErrorMessage(`Unable to generate call graph: ${String(error)}`)
                             }
-                            const addElemsMsg: ExtensionToWebviewMessage = {
-                                type: 'addElems',
-                                data: state.elems,
-                            }
-                            panel.webview.postMessage(addElemsMsg)
                         }
                         break
                 }
+                break
+
+            case 'elementsReceived':
+                pendingBatches.delete(msg.data.batchId)
+                break
 
             case 'goToFunction':
                 const goToNode = nodes[msg.data] as CyNode
@@ -214,26 +236,36 @@ export function setupCallGraph(
                 })
                 break
 
-            case 'expandBoth':
-                const node = nodes[msg.data.id] as CyNode
-                if (!node) return
-                const position = new vscode.Position(node.data.line, node.data.character)
-                const item: vscode.CallHierarchyItem[] =
-                    await vscode.commands.executeCommand(
-                        'vscode.prepareCallHierarchy',
-                        node.data.uri,
-                        position,
+            case 'expandBoth': {
+                const id = msg.data.id
+                // Suppress overlapping requests even if several UI actions target the same node.
+                if (expandingNodes.has(id)) return
+                expandingNodes.add(id)
+                try {
+                    const node = nodes[id]
+                    if (node?.group !== 'nodes' || node.classes?.includes('compound')) return
+                    const position = new vscode.Position(node.data.line, node.data.character)
+                    const item: vscode.CallHierarchyItem[] = await vscode.commands.executeCommand(
+                        'vscode.prepareCallHierarchy', node.data.uri, position,
                     )
-                if (!item || !item[0]) {
-                    vscode.window.showErrorMessage("Can't resolve entry function")
-                    return
+                    if (!item?.[0]) {
+                        vscode.window.showErrorMessage("Can't resolve entry function")
+                        return
+                    }
+                    await buildGraph('Both', item[0], addEdge, msg.data.depth)
+                } catch (error) {
+                    vscode.window.showErrorMessage(`Unable to expand call graph: ${String(error)}`)
+                } finally {
+                    // Always release the webview's pending state, including missing symbols and failures.
+                    expandingNodes.delete(id)
+                    const complete: ExtensionToWebviewMessage = { type: 'expansionComplete', data: { id } }
+                    panel.webview.postMessage(complete)
                 }
-
-                await buildGraph('Both', item[0], addEdge, msg.data.depth)
                 break
+            }
 
             case 'timing':
-                const t = msg.data as any
+                const t = msg.data
                 printChannelOutput(`[timing] scriptLoad=${t.scriptLoad.toFixed(0)}ms toReady=${t.toReady.toFixed(0)}ms render=${t.render.toFixed(0)}ms total=${t.total.toFixed(0)}ms`)
                 break
 

@@ -1,6 +1,11 @@
 out
+/out-tests/
 /dist/*
 node_modules/**
 .vscode-test/
 *.vsix
 /static/graph_data*
+/plans/
+.playwright-cli/
+/handoff-*.md
+/output/playwright/

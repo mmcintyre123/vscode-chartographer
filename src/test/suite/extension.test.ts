@@ -14,6 +14,7 @@ suite('Extension', () => {
         const expected = [
             'Chartographer.addHierarchy',
             'Chartographer.showCallGraph',
+            'Chartographer.showAllIncomingCallGraph',
             'Chartographer.showOutputChannel',
         ]
         for (const cmd of expected) {

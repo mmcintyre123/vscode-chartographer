@@ -6,7 +6,22 @@
 		{
 			"type": "npm",
 			"script": "watch",
-			"problemMatcher": "$tsc-watch",
+			// Wait for both esbuild bundles before launching the extension host.
+			"problemMatcher": {
+				"owner": "esbuild",
+				"pattern": {
+					"regexp": "^(.*):(\\d+):(\\d+): error: (.*)$",
+					"file": 1,
+					"line": 2,
+					"column": 3,
+					"message": 4
+				},
+				"background": {
+					"activeOnStart": true,
+					"beginsPattern": "^\\[watch\\] starting$",
+					"endsPattern": "^\\[watch\\] ready$"
+				}
+			},
 			"isBackground": true,
 			"presentation": {
 				"reveal": "never"
@@ -15,6 +30,12 @@
 				"kind": "build",
 				"isDefault": true
 			}
+		},
+		{
+			"label": "Prepare extension tests",
+			"dependsOrder": "sequence",
+			"dependsOn": ["npm: build", "npm: compile:tests"],
+			"problemMatcher": []
 		}
 	]
 }

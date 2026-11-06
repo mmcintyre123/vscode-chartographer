@@ -2,6 +2,7 @@
 .vscode-test/**
 src/**
 out/**
+out-tests/**
 .gitignore
 .yarnrc
 vsc-extension-quickstart.md
@@ -12,6 +13,10 @@ vsc-extension-quickstart.md
 .history
 static/**
 esbuild.config.mjs
+plans/**
+.playwright-cli/**
+handoff-*.md
+output/**
 !src/html/*.html
 !out/extension.js
 !out/webview.js

@@ -10,7 +10,10 @@ async function main() {
         await runTests({
             extensionDevelopmentPath,
             extensionTestsPath,
-            launchArgs: ['--disable-extensions'],
+            // Reuse an installed editor for offline checks while retaining the isolated test profile.
+            vscodeExecutablePath: process.env.CHARTOGRAPHER_TEST_VSCODE,
+            // Keep call-hierarchy fixtures inside the test workspace so workspace filtering is exercised.
+            launchArgs: [path.join(extensionDevelopmentPath, 'src', 'test', 'fixtures'), '--disable-extensions'],
         })
     } catch (err) {
         console.error('Failed to run tests:', err)

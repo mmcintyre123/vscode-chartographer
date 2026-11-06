@@ -3,12 +3,56 @@
     <head>
         <title>Chartographer</title>
         <style>
+            body {
+                margin: 0;
+                height: 100vh;
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+                color: var(--vscode-editor-foreground, #cccccc);
+                background: var(--vscode-editor-background, #1e1e1e);
+                font-family: var(--vscode-font-family, sans-serif);
+            }
+
+            /* Let controls wrap inside narrow editor groups without covering the graph. */
+            #graph-toolbar {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 8px 16px;
+                align-items: center;
+                padding: 8px 10px;
+                z-index: 20;
+                flex: none;
+                font-size: 12px;
+            }
+
+            .graph-control {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+
+            button, select, input {
+                font: inherit;
+                color: var(--vscode-input-foreground, #cccccc);
+                background: var(--vscode-input-background, #333333);
+                border: 1px solid var(--vscode-dropdown-border, #666666);
+                border-radius: 4px;
+                padding: 6px 8px;
+            }
+
+            button, select { cursor: pointer; }
+            :focus-visible { outline: 2px solid var(--vscode-focusBorder, #007fd4); outline-offset: 2px; }
+            #graph-area { position: relative; flex: 1; min-height: 0; }
             #cy {
-                height: 500px;
+                height: 100%;
                 width: 100%;
                 display: block;
                 z-index: 10;
             }
+
+            #node-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 11; }
+            .node-label { position: absolute; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; white-space: pre; line-height: 1.2; }
 
             #instructions {
                 position: absolute;
@@ -32,13 +76,10 @@
             }
 
             #question-mark {
-                position: absolute;
-                top: 10px;
-                left: 10px;
                 cursor: pointer;
                 z-index: 20;
                 font-size: 20px;
-                color: rgba(255, 255, 255, 0.5);
+                color: var(--vscode-editor-foreground, #cccccc);
                 width: 40px;
                 height: 40px;
                 background-color: rgba(0, 0, 0, 0.3);
@@ -52,13 +93,10 @@
                 text-decoration: underline;
             }
             #reset-zoom {
-                position: absolute;
-                top: 10px;
-                left: 65px;
                 cursor: pointer;
                 z-index: 20;
                 font-size: 12px;
-                color: rgba(255, 255, 255, 0.5);
+                color: var(--vscode-editor-foreground, #cccccc);
                 width: 100px;
                 height: 40px;
                 background-color: rgba(0, 0, 0, 0.3);
@@ -70,9 +108,8 @@
             }
 
             #search-container {
-                position: absolute;
-                top: 10px;
-                right: 10px;
+                position: relative;
+                margin-left: auto;
                 z-index: 20;
                 display: flex;
                 align-items: center;
@@ -101,6 +138,9 @@
             }
 
             .search-result-item {
+                display: block;
+                width: 100%;
+                text-align: left;
                 padding: 8px;
                 cursor: pointer;
                 color: rgba(255, 255, 255, 0.9);
@@ -193,9 +233,34 @@
         </style>
     </head>
     <body>
-        <div id="question-mark" onclick="toggleInstructions()">&#63;</div>
+        <div id="graph-toolbar" role="region" aria-label="Graph controls">
+            <button id="question-mark" type="button" aria-label="Graph instructions">&#63;</button>
+            <button id="reset-zoom" type="button">Reset Zoom</button>
+            <div class="graph-control">
+                <label for="graph-direction">Direction</label>
+                <select id="graph-direction">
+                    <option value="DOWN">Top to bottom</option>
+                    <option value="RIGHT">Left to right</option>
+                    <option value="LEFT">Right to left</option>
+                    <option value="UP">Bottom to top</option>
+                </select>
+            </div>
+            <div class="graph-control">
+                <label for="file-groups">File groups</label>
+                <select id="file-groups">
+                    <option value="hidden">Hidden</option>
+                    <option value="boxes">Boxes only</option>
+                    <option value="labels">Labels only</option>
+                    <option value="both">Boxes + labels</option>
+                </select>
+            </div>
+            <div id="search-container">
+                <input type="search" id="search-input" aria-label="Search functions or files" placeholder="Search functions or files..." />
+                <div id="search-results"></div>
+            </div>
+        </div>
 
-        <div id="instructions" style="display: none;" onclick="toggleInstructions()">
+        <div id="instructions" style="display: none;">
             <p>Hover + E to expand one level</p>
             <p>Hover + Shift+E to expand recursively</p>
             <p>Hover + Del to remove node</p>
@@ -205,32 +270,17 @@
             <p>Ctrl+Click to go to function</p>
             <p>Right-click for context menu</p>
             <p>Scroll to zoom · Drag to pan</p>
-            <div id="hide-text">Click to hide</div>
+            <button id="hide-text" type="button">Hide instructions</button>
         </div>
-
-        <div id="reset-zoom">Reset Zoom</div>
 
         <div id="path-indicator"></div>
 
-        <div id="search-container">
-            <input type="text" id="search-input" placeholder="Search nodes..." />
-            <div id="search-results"></div>
+        <div id="graph-area">
+            <div id="cy"></div>
+            <div id="node-labels" aria-hidden="true"></div>
         </div>
 
-        <div id="cy" style="height:100vh"></div>
-
         <div id="context-menu"></div>
-
-        <script>
-            function toggleInstructions() {
-                const instructions = document.getElementById("instructions");
-                if (instructions.style.display === "none" || instructions.style.display === "") {
-                    instructions.style.display = "block";
-                } else {
-                    instructions.style.display = "none";
-                }
-            }
-        </script>
 
         <script src="{{webviewScriptURI}}"></script>
     </body>

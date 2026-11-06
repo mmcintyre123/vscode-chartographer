@@ -2,7 +2,9 @@ import cytoscape, { Core } from 'cytoscape'
 import cytoscapeDagre from 'cytoscape-dagre'
 import cytoscapeElk from 'cytoscape-elk'
 import cytoscapeKlay from 'cytoscape-klay'
-import { ChartographerConfig, LayoutDirection, WebviewToExtensionMessage, ExtensionToWebviewMessage, WebviewState } from '../protocol'
+import { GraphDirection, GraphSettings, WebviewToExtensionMessage, ExtensionToWebviewMessage, WebviewState } from '../protocol'
+import { createGraphSettings, FileGroupMode, getFileGroupMode, showFunctionFileSubtitles, withFileGroupMode } from './settings'
+import { setupWheelZoom } from './wheel-zoom'
 
 cytoscape.use(cytoscapeDagre)
 cytoscape.use(cytoscapeElk)
@@ -32,7 +34,10 @@ let state: WebviewState = previousState || {
 }
 if (!state.elems) state.elems = []
 
-let expandedNodes: Set<string> = new Set()
+// An expansion remains pending until the extension finishes or reports an error.
+const pendingExpansions = new Set<string>()
+let graphSettings: GraphSettings
+const nodeLabelElements = new Map<string, { container: HTMLDivElement; title: HTMLDivElement; file: HTMLDivElement }>()
 
 const layoutDebounce: Record<string, number> = {
     klay: 5,
@@ -123,14 +128,18 @@ function getCyStyle(): cytoscape.StylesheetStyle[] {
             selector: 'node',
             style: {
                 'font-size': '12px',
+                'font-family': getStyle('--vscode-font-family') || 'sans-serif',
                 'background-color': getColor(colors.node.backgroundColor, overrides.nodeBackgroundColor),
                 color: getColor(colors.node.color, overrides.nodeColor),
                 width: 'label',
-                padding: '5px',
+                height: showFunctionFileSubtitles(state.config, graphSettings) ? 28 : 16,
+                padding: '7px',
                 'border-color': getColor(colors.node.borderColor, overrides.nodeBorderColor),
                 'border-width': 1,
                 shape: 'roundrectangle',
-                label: 'data(label)',
+                label: showFunctionFileSubtitles(state.config, graphSettings) ? 'data(displayLabel)' : 'data(label)',
+                'text-opacity': 0,
+                'text-wrap': 'wrap',
                 'text-halign': 'center',
                 'text-valign': 'center',
             },
@@ -161,14 +170,14 @@ function getCyStyle(): cytoscape.StylesheetStyle[] {
             selector: '.compound',
             style: {
                 'font-size': '10px',
-                'padding-top': '25px',
-                'background-color': state.config.showFileGroupBox
-                    ? getColor(colors.compound.backgroundColor, overrides.nodeGroupBackgroundColor)
-                    : 'transparent',
-                'border-width': state.config.showFileGroupBox ? 1 : 0,
+                'padding-top': graphSettings.showFileGroupLabel ? '25px' : '10px',
+                'background-color': getColor(colors.compound.backgroundColor, overrides.nodeGroupBackgroundColor),
+                'background-opacity': graphSettings.showFileGroupBox ? 1 : 0,
+                'border-width': graphSettings.showFileGroupBox ? 1 : 0,
                 'border-color': getColor(colors.node.borderColor, overrides.nodeBorderColor),
                 shape: 'roundrectangle',
-                label: state.config.showFileGroupLabel ? 'data(label)' : '',
+                label: graphSettings.showFileGroupLabel ? 'data(label)' : '',
+                'text-opacity': 1,
                 'text-valign': 'top',
                 'text-halign': 'center',
                 'text-margin-y': 15,
@@ -205,15 +214,17 @@ function getCyStyle(): cytoscape.StylesheetStyle[] {
 }
 
 function resetRootHighlights(): void {
-    if (state.config.highlightRoots && cy) {
-        cy.nodes().removeClass('highlightedRootNode')
+    if (!cy) return
+    cy.nodes().removeClass('highlightedRootNode')
+    if (state.config.highlightRoots) {
         cy.nodes().roots().not(':parent').addClass('highlightedRootNode')
     }
 }
 
 function resetLeafHighlights(): void {
-    if (state.config.highlightLeaves && cy) {
-        cy.nodes().removeClass('highlightedLeafNode')
+    if (!cy) return
+    cy.nodes().removeClass('highlightedLeafNode')
+    if (state.config.highlightLeaves) {
         cy.nodes().leaves().not(':parent').addClass('highlightedLeafNode')
     }
 }
@@ -269,6 +280,97 @@ function hidePathIndicator(): void {
     if (el) el.style.display = 'none'
 }
 
+// Save the current graph rather than the history of incoming add messages.
+function saveGraphState(): void {
+    if (!cy) return
+    state.elems = cy.elements().map(element => element.json() as cytoscape.ElementDefinition)
+    state.graphSettings = { ...graphSettings }
+    vscode.setState(state)
+}
+
+// Older upstream graphs have file names on their parents, but no function subtitle fields.
+function normalizeNodeLabels(elements = cy?.nodes()): void {
+    elements?.nodes().not('.compound').forEach(node => {
+        const fileLabel = node.data('fileLabel') ?? node.parent().data('label') ?? ''
+        node.data('fileLabel', fileLabel)
+        node.data('displayLabel', fileLabel ? `${node.data('label')}\n${fileLabel}` : node.data('label'))
+    })
+}
+
+// Canvas labels use one font size. These non-interactive overlays add smaller subtitles.
+function syncNodeLabels(): void {
+    const container = document.getElementById('node-labels')
+    if (!cy || !container) return
+    const activeIds = new Set<string>()
+    const zoom = cy.zoom()
+    const showFiles = showFunctionFileSubtitles(state.config, graphSettings)
+    cy.nodes().not('.compound').forEach(node => {
+        activeIds.add(node.id())
+        let elements = nodeLabelElements.get(node.id())
+        if (!elements) {
+            elements = {
+                container: document.createElement('div'),
+                title: document.createElement('div'),
+                file: document.createElement('div'),
+            }
+            elements.container.className = 'node-label'
+            elements.title.className = 'node-label-title'
+            elements.file.className = 'node-label-file'
+            elements.container.append(elements.title, elements.file)
+            container.append(elements.container)
+            nodeLabelElements.set(node.id(), elements)
+        }
+        const position = node.renderedPosition()
+        const fileLabel = node.data('fileLabel') || ''
+        elements.title.textContent = node.data('label')
+        elements.file.textContent = fileLabel
+        elements.file.style.display = showFiles && fileLabel ? 'block' : 'none'
+        Object.assign(elements.container.style, {
+            left: `${position.x}px`,
+            top: `${position.y}px`,
+            color: node.style('color'),
+            opacity: node.style('opacity'),
+            display: node.visible() ? 'flex' : 'none',
+        })
+        elements.title.style.fontSize = `${12 * zoom}px`
+        elements.file.style.fontSize = `${9 * zoom}px`
+        elements.file.style.marginTop = `${2 * zoom}px`
+    })
+    nodeLabelElements.forEach((elements, id) => {
+        if (!activeIds.has(id)) {
+            elements.container.remove()
+            nodeLabelElements.delete(id)
+        }
+    })
+}
+
+// Pickers update this graph immediately without changing VS Code configuration.
+function setupGraphControls(): void {
+    const direction = document.getElementById('graph-direction') as HTMLSelectElement
+    const groups = document.getElementById('file-groups') as HTMLSelectElement
+    direction.value = graphSettings.direction
+    groups.value = getFileGroupMode(graphSettings)
+    direction.addEventListener('change', () => {
+        graphSettings.direction = direction.value as GraphDirection
+        saveGraphState()
+        cy?.layout(getLayoutOpts()).run()
+    })
+    groups.addEventListener('change', () => {
+        graphSettings = withFileGroupMode(graphSettings, groups.value as FileGroupMode)
+        cy?.style(getCyStyle())
+        syncNodeLabels()
+        saveGraphState()
+        cy?.layout(getLayoutOpts()).run()
+    })
+}
+
+function requestExpansion(id: string, depth: number): void {
+    const node = cy?.getElementById(id)
+    if (!node?.length || node.hasClass('compound') || pendingExpansions.has(id)) return
+    pendingExpansions.add(id)
+    vscode.postMessage({ type: 'expandBoth', data: { id, depth } })
+}
+
 function toggleInstructions(): void {
     const instructions = document.getElementById('instructions')
     if (!instructions) return
@@ -292,18 +394,24 @@ function setupSearch(): void {
             return
         }
 
-        const matchingNodes = cy!.nodes().filter(node => {
+        const matchingNodes = cy!.nodes().not('.compound').filter(node => {
             const label = node.data('label') || ''
-            return label.toLowerCase().includes(query)
+            const fileLabel = node.data('fileLabel') || ''
+            return label.toLowerCase().includes(query) || fileLabel.toLowerCase().includes(query)
         })
 
         searchResults.innerHTML = ''
         if (matchingNodes.length > 0) {
             searchResults.style.display = 'block'
             matchingNodes.forEach(node => {
-                const resultItem = document.createElement('div')
+                const resultItem = document.createElement('button')
+                resultItem.type = 'button'
                 resultItem.className = 'search-result-item'
-                resultItem.textContent = node.data('label')
+                const name = document.createElement('div')
+                name.textContent = node.data('label')
+                const file = document.createElement('small')
+                file.textContent = node.data('fileLabel') || ''
+                resultItem.append(name, file)
                 resultItem.addEventListener('click', () => {
                     resetHighlights()
                     node.addClass('searchHighlight')
@@ -332,9 +440,8 @@ function setupSearch(): void {
 
 function getLayoutOpts(): cytoscape.LayoutOptions {
     const algo = state.config.defaultGraphLayoutAlgorithm || 'klay'
-    const dir = state.config.defaultDirection || 'horizontal'
-    const klayDir = dir === 'horizontal' ? 'RIGHT' : 'DOWN'
-    const dagreDir = dir === 'horizontal' ? 'LR' : 'TB'
+    const dir = graphSettings.direction
+    const dagreDirections = { DOWN: 'TB', RIGHT: 'LR', LEFT: 'RL', UP: 'BT' }
 
     const base: Record<string, unknown> = {
         name: algo,
@@ -342,9 +449,10 @@ function getLayoutOpts(): cytoscape.LayoutOptions {
         animationDuration: 250,
         klay: {
             addUnnecessaryBendpoints: false,
-            direction: klayDir,
+            direction: dir,
             layoutHierarchy: true,
-            spacing: 5,
+            spacing: state.config.klaySpacing ?? 1,
+            borderSpacing: 10,
             compactComponents: true,
             thoroughness: 10,
             edgeSpacingFactor: 0.5,
@@ -352,9 +460,11 @@ function getLayoutOpts(): cytoscape.LayoutOptions {
         },
         elk: {
             algorithm: 'layered',
-            'elk.direction': dir === 'horizontal' ? 'RIGHT' : 'DOWN',
+            'elk.direction': dir,
         },
-        rankDir: dagreDir,
+        // ELK lays out file groups separately; each group needs the selected direction too.
+        nodeLayoutOptions: () => ({ 'elk.direction': dir }),
+        rankDir: dagreDirections[dir],
         rankSep: 15,
         nodeSep: 15,
         edgeSep: 15,
@@ -374,18 +484,29 @@ const methods: {
 } = {
     setParams(msg) {
         t1 = performance.now()
+        graphSettings = createGraphSettings(previousState?.config ?? msg.data.config, state.graphSettings)
         state = { ...state, config: msg.data.config }
-        vscode.postMessage({ type: 'state', data: 'ready' })
         start()
+        vscode.postMessage({ type: 'state', data: 'ready' })
     },
-addElems(msg) {
+    addElems(msg) {
         t2 = performance.now()
-        state.elems = state.elems.concat(msg.data)
-        cy?.add(msg.data)
-        vscode.setState(state)
+        // Hierarchy results repeat shared nodes; keep one copy in the graph and saved state.
+        const seen = new Set<string>()
+        const additions = msg.data.filter(element => {
+            const id = element.data.id
+            if (!id || seen.has(id) || cy?.getElementById(id).length) return false
+            seen.add(id)
+            return true
+        })
+        const added = cy?.add(additions)
+        normalizeNodeLabels(added)
         resetRootHighlights()
         resetLeafHighlights()
         resetHighlights()
+        saveGraphState()
+        // Acknowledge only after saving, so results missed while hidden can be replayed safely.
+        vscode.postMessage({ type: 'elementsReceived', data: { batchId: msg.batchId } })
         debouncedLayout()
         t3 = performance.now()
         vscode.postMessage({
@@ -396,11 +517,14 @@ addElems(msg) {
                 render: t3 - t2,
                 total: t3 - t0,
             },
-        } as any)
+        })
     },
-highlightPath(msg) {
+    highlightPath(msg) {
         resetHighlights()
         computePath(msg.data.sourceId, msg.data.targetId)
+    },
+    expansionComplete(msg) {
+        pendingExpansions.delete(msg.data.id)
     },
 }
 
@@ -419,11 +543,6 @@ function isCtrlClick(evt: cytoscape.EventObject): boolean {
     return e.ctrlKey
 }
 
-function isAltClick(evt: cytoscape.EventObject): boolean {
-    const e = evt.originalEvent as MouseEvent | undefined
-    return e?.altKey || false
-}
-
 function isShiftClick(evt: cytoscape.EventObject): boolean {
     const e = evt.originalEvent as MouseEvent | undefined
     return e?.shiftKey || false
@@ -434,8 +553,10 @@ function removeNode(id: string): void {
     const node = cy.getElementById(id)
     if (node.length === 0) return
     cy.remove(node)
-    state.elems = state.elems.filter(e => e.data?.id !== id)
-    vscode.setState(state)
+    syncNodeLabels()
+    resetRootHighlights()
+    resetLeafHighlights()
+    saveGraphState()
 }
 
 function removeSubtree(id: string, direction: 'descendants' | 'ancestors'): void {
@@ -447,12 +568,11 @@ function removeSubtree(id: string, direction: 'descendants' | 'ancestors'): void
         ? node.successors()
         : node.predecessors()
     const all = nodes as cytoscape.CollectionReturnValue
-    const ids = all.map(n => n.id())
-
     cy.remove(all)
-    state.elems = state.elems.filter(e => e.data?.id && !ids.includes(e.data.id))
-    expandedNodes.forEach((_, k) => { if (ids.includes(k)) expandedNodes.delete(k) })
-    vscode.setState(state)
+    resetRootHighlights()
+    resetLeafHighlights()
+    saveGraphState()
+    syncNodeLabels()
     debouncedLayout()
 }
 
@@ -503,10 +623,10 @@ function handleContextAction(action: string, nodeId: string): void {
             removeSubtree(nodeId, 'ancestors')
             break
         case 'expand':
-            vscode.postMessage({ type: 'expandBoth', data: { id: nodeId, depth: 1 } })
+            requestExpansion(nodeId, 1)
             break
         case 'expandAll':
-            vscode.postMessage({ type: 'expandBoth', data: { id: nodeId, depth: -1 } })
+            requestExpansion(nodeId, -1)
             break
         case 'findPathTo':
             vscode.postMessage({ type: 'findPathTo', data: { sourceId: nodeId } })
@@ -530,16 +650,28 @@ function start(): void {
         container,
         style: getCyStyle(),
         elements: state.elems,
-        wheelSensitivity: state.config.wheelSensitivity ?? 0.5,
+        wheelSensitivity: state.config.wheelSensitivity ?? 0.1,
         minZoom: 0.075,
         maxZoom: 7.5,
     })
+    const graphArea = document.getElementById('graph-area')
+    if (graphArea) setupWheelZoom(graphArea, cy, state.config.wheelSensitivity ?? 0.1)
 
+    normalizeNodeLabels()
+    resetRootHighlights()
+    resetLeafHighlights()
+    resetHighlights()
+    cy.on('render', syncNodeLabels)
     cy!.layout(getLayoutOpts()).run()
+    saveGraphState()
 
     setupSearch()
+    setupGraphControls()
+    syncNodeLabels()
 
     document.getElementById('reset-zoom')?.addEventListener('click', () => cy?.fit())
+    document.getElementById('question-mark')?.addEventListener('click', toggleInstructions)
+    document.getElementById('hide-text')?.addEventListener('click', toggleInstructions)
 
     cy!.on('mouseover', 'node', function (e) {
         hoveredNodeId = e.target.id()
@@ -549,16 +681,17 @@ function start(): void {
     })
 
     document.addEventListener('keydown', function (e) {
+        // Typing/searching and operating a select must never expand or remove graph nodes.
+        const target = e.target as HTMLElement | null
+        if (target?.closest('input, select, textarea, button, [contenteditable="true"]')) return
+        if (e.repeat || e.ctrlKey || e.altKey || e.metaKey) return
         if (!hoveredNodeId) return
         const node = cy?.getElementById(hoveredNodeId)
         if (!node || node.length === 0) return
 
-        if (e.key === 'e' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        if (e.key.toLowerCase() === 'e') {
             e.preventDefault()
-            vscode.postMessage({ type: 'expandBoth', data: { id: hoveredNodeId, depth: 1 } })
-        } else if (e.key === 'e' && e.shiftKey) {
-            e.preventDefault()
-            vscode.postMessage({ type: 'expandBoth', data: { id: hoveredNodeId, depth: -1 } })
+            requestExpansion(hoveredNodeId, e.shiftKey ? -1 : 1)
         } else if (e.key === 'Delete' || e.key === 'Backspace') {
             e.preventDefault()
             removeNode(hoveredNodeId)
@@ -633,7 +766,8 @@ function start(): void {
 
     cy!.on('cxttap', 'node', function (e) {
         const rendered = e.target.renderedPosition()
-        showContextMenu(rendered.x, rendered.y, e.target.id())
+        const bounds = container.getBoundingClientRect()
+        showContextMenu(bounds.left + rendered.x, bounds.top + rendered.y, e.target.id())
     })
 
     document.getElementById('context-menu')?.addEventListener('click', function (e) {

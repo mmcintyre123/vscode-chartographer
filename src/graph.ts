@@ -31,23 +31,28 @@ export const getCyNodes = (n: Node, config?: ChartographerConfig) => {
     const nodeName = config?.trimFunctionPattern
         ? trimFunctionName(n.name, config.trimFunctionPattern)
         : n.name;
+    // Keep the function name separate so file subtitles can be toggled per graph.
+    const fileLabel = formatFileLabel(n.file, config);
     return [
         {
             group: 'nodes',
             data: {
                 id: `node:${n.id}`,
                 label: nodeName,
+                fileLabel,
+                displayLabel: `${nodeName}\n${fileLabel}`,
                 parent: `file:${n.file}`,
                 uri: n.uri,
                 line: n.line,
                 character: n.character,
-            }
+            },
+            classes: 'hasFileSubtitle'
         } as CyNode,
         {
             group: 'nodes',
             data: {
                 id: `file:${n.file}`,
-                label: formatFileLabel(n.file, config),
+                label: fileLabel,
                 uri: n.uri,
                 line: 0,
                 character: 0,
@@ -145,6 +150,8 @@ export type CyNode = {
     data: {
         id: string;
         label: string;
+        fileLabel?: string;
+        displayLabel?: string;
         parent?: string;
         uri: vscode.Uri;
         line: number;
