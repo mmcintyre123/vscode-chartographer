@@ -2,7 +2,7 @@
 
 Initially based on [Call Graph](https://github.com/beicause/call-graph)
 
-![chartographer](https://raw.githubusercontent.com/arpinfidel/vscode-chartographer/master/assets/call-graph.png)
+![Chartographer using the Dagre layout to show calls between its own functions and VS Code and Node.js APIs, grouped by source file](assets/call-graph.png)
 
 vscode extension to generate call graph using [Cytoscape.js](https://js.cytoscape.org/) based on vscode call hierarchy language feature.
 
